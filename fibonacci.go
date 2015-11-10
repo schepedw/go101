@@ -1,9 +1,11 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
+	_ "github.com/lib/pq"
 	"log"
-	"math"
+	//	"math"
 	"net/http"
 	"path"
 	"strconv"
@@ -13,15 +15,24 @@ func main() {
 	fib_server()
 }
 
-func nth_fib(fib_index int, fib_sequence []int) (nth_fib int) {
-	switch fib_index {
-	case 0:
-		return 0
-	case 1:
-		return 1
-	default:
-		return fib_sequence[0] + fib_sequence[1]
+func find_or_create_fib_index(index int) (fib_value int) {
+	db := db_connection()
+	var value int
+	err := db.QueryRow("SELECT value FROM fibonacci WHERE index=$1", index).Scan(&value)
+	switch {
+	case err == sql.ErrNoRows:
+		switch {
+		case index <= 1:
+			db.QueryRow("insert into fibonacci values($1, $2) returning value", index, index).Scan(&value)
+		default:
+			value = find_or_create_fib_index(index-1) + find_or_create_fib_index(index-2)
+			db.Exec("insert into fibonacci values($1, $2)", index, value)
+		}
+	case err != nil:
+		log.Fatal(err)
 	}
+	db.Close()
+	return value
 }
 
 func fib_server() {
@@ -36,11 +47,17 @@ func fib_server() {
 		}
 		fib_sequence := make([]int, n)
 		for i := 0; i < n; i++ {
-			min_bound := math.Max(float64(i-2), 0.0)
-			max_bound := math.Max(float64(i), 0.0)
-			fib_sequence[i] = nth_fib(i, fib_sequence[int(min_bound):int(max_bound)])
+			fib_sequence[i] = find_or_create_fib_index(i)
 		}
 		fmt.Fprintln(w, fib_sequence)
 	})
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func db_connection() (db *sql.DB) {
+	db, err := sql.Open("postgres", "user=weekly_workshop dbname=weekly_workshop sslmode=disable")
+	if err != nil {
+		log.Fatal(err)
+	}
+	return db
 }
